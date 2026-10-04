@@ -1,0 +1,85 @@
+---
+# setup.yml - Install and configure Lookbusy (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e lookbusy_cpu_percent=75
+#   ansible-playbook -i inventory setup.yml -e lookbusy_mem_mb=1024
+
+- name: Setup Lookbusy
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    lookbusy_cpu_percent: 50
+    lookbusy_mem_mb: 512
+    lookbusy_disk_path: /tmp
+    lookbusy_disk_io_mb: 100
+    lookbusy_network_interface: eth0
+    lookbusy_network_mbps: 10
+    lookbusy_manage_firewall: false
+
+    lookbusy_os_config:
+      Debian:
+        packages: [ lookbusy ]
+      RedHat:
+        packages: [ lookbusy ]
+      Suse:
+        packages: [ lookbusy ]
+      Archlinux:
+        packages: [ lookbusy ]
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in lookbusy_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      lookbusy_packages: "{{ lookbusy_os_config[ansible_os_family].packages }}"
+
+  tasks:
+  - name: Install Lookbusy packages
+    ansible.builtin.package:
+      name: "{{ lookbusy_packages }}"
+      state: present
+
+  - name: Create Lookbusy systemd service
+    ansible.builtin.template:
+      src: lookbusy.service.j2
+      dest: /etc/systemd/system/lookbusy.service
+      mode: "0644"
+    notify: Restart Lookbusy
+
+  - name: Enable and start Lookbusy service
+    ansible.builtin.systemd:
+      name: lookbusy
+      enabled: true
+      state: started
+      daemon_reload: true
+
+  - name: Show Lookbusy status
+    ansible.builtin.command: systemctl status lookbusy --no-pager
+    register: lookbusy_status_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print Lookbusy status
+    ansible.builtin.debug:
+      var: lookbusy_status_out.stdout_lines
+
+  handlers:
+  - name: Restart Lookbusy
+    ansible.builtin.systemd:
+      name: lookbusy
+      state: restarted

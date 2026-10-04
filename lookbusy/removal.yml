@@ -1,0 +1,75 @@
+---
+# removal.yml - Remove Lookbusy (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e lookbusy_remove_packages=false # keep packages
+
+- name: Remove Lookbusy
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    lookbusy_remove_packages: true
+
+    lookbusy_os_config:
+      Debian:
+        packages: [ lookbusy ]
+      RedHat:
+        packages: [ lookbusy ]
+      Suse:
+        packages: [ lookbusy ]
+      Archlinux:
+        packages: [ lookbusy ]
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in lookbusy_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      lookbusy_packages: "{{ lookbusy_os_config[ansible_os_family].packages }}"
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable Lookbusy service
+    ansible.builtin.systemd:
+      name: lookbusy
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: 'lookbusy.service' in ansible_facts.services
+
+  - name: Remove Lookbusy systemd service file
+    ansible.builtin.file:
+      path: /etc/systemd/system/lookbusy.service
+      state: absent
+    failed_when: false
+
+  - name: Reload systemd daemon
+    ansible.builtin.systemd:
+      daemon_reload: true
+
+  - name: Remove Lookbusy packages
+    ansible.builtin.package:
+      name: "{{ lookbusy_packages }}"
+      state: absent
+    when: lookbusy_remove_packages | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        Lookbusy removed from {{ inventory_hostname }}.
