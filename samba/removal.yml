@@ -1,0 +1,118 @@
+---
+# removal.yml - Remove Samba server configuration and packages (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e samba_remove_shares=true   # also deletes share data!
+#   ansible-playbook -i inventory removal.yml -e samba_remove_packages=false # keep packages
+
+- name: Remove Samba server
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    samba_shares: []
+    samba_remove_packages: true
+    samba_remove_shares: false
+    samba_manage_firewall: true
+
+    samba_os_config:
+      Debian:
+        packages: [ samba, samba-common ]
+        service: smbd
+      RedHat:
+        packages: [ samba, samba-common ]
+        service: smb
+      Suse:
+        packages: [ samba ]
+        service: smb
+      Archlinux:
+        packages: [ samba ]
+        service: smb
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in samba_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      samba_packages: "{{ samba_os_config[ansible_os_family].packages }}"
+      samba_service: "{{ samba_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable Samba service
+    ansible.builtin.systemd:
+      name: "{{ samba_service }}"
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: (samba_service ~ '.service') in ansible_facts.services
+
+  - name: Remove Samba configuration
+    ansible.builtin.file:
+      path: /etc/samba/smb.conf
+      state: absent
+    failed_when: false
+
+  - name: Remove share directories
+    ansible.builtin.file:
+      path: "{{ item.path }}"
+      state: absent
+    loop: "{{ samba_shares }}"
+    when: samba_remove_shares | bool
+
+  - name: Close Samba in firewalld
+    ansible.posix.firewalld:
+      service: samba
+      permanent: true
+      immediate: true
+      state: disabled
+    when:
+    - samba_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: samba_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - samba_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Remove Samba rule from ufw
+    community.general.ufw:
+      rule: allow
+      port: "139,445"
+      proto: tcp
+      delete: true
+    when:
+    - samba_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (samba_ufw_status.stdout | default(''))"
+
+  - name: Remove Samba packages
+    ansible.builtin.package:
+      name: "{{ samba_packages }}"
+      state: absent
+    when: samba_remove_packages | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        Samba removed from {{ inventory_hostname }}. Share directories {{ 'deleted' if samba_remove_shares | bool else 'kept' }}.

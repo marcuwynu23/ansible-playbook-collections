@@ -1,0 +1,138 @@
+---
+# setup.yml - Install and configure a Samba server (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e samba_workgroup=MYGROUP
+#   ansible-playbook -i inventory setup.yml -e samba_shares=[{name:shared,path:/srv/samba/shared}]
+
+- name: Setup Samba server
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    samba_workgroup: WORKGROUP
+    samba_server_string: "Samba Server %v"
+    samba_security: user
+    samba_map_to_guest: Never
+    samba_shares: []
+    samba_users: []
+    samba_manage_firewall: true
+
+    samba_os_config:
+      Debian:
+        packages: [ samba, samba-common ]
+        service: smbd
+      RedHat:
+        packages: [ samba, samba-common ]
+        service: smb
+      Suse:
+        packages: [ samba ]
+        service: smb
+      Archlinux:
+        packages: [ samba ]
+        service: smb
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in samba_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      samba_packages: "{{ samba_os_config[ansible_os_family].packages }}"
+      samba_service: "{{ samba_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Install Samba packages
+    ansible.builtin.package:
+      name: "{{ samba_packages }}"
+      state: present
+
+  - name: Configure /etc/samba/smb.conf
+    ansible.builtin.template:
+      src: smb.conf.j2
+      dest: /etc/samba/smb.conf
+      mode: "0644"
+    notify: Restart Samba
+
+  - name: Create share directories
+    ansible.builtin.file:
+      path: "{{ item.path }}"
+      state: directory
+      mode: "0755"
+    loop: "{{ samba_shares }}"
+    when: samba_shares | length > 0
+
+  - name: Create Samba users
+    ansible.builtin.shell: |
+      (echo '{{ item.password }}'; echo '{{ item.password }}') | smbpasswd -s -a {{ item.name }}
+    loop: "{{ samba_users }}"
+    when: samba_users | length > 0
+    no_log: true
+
+  - name: Enable and start Samba service
+    ansible.builtin.systemd:
+      name: "{{ samba_service }}"
+      enabled: true
+      state: started
+
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+    when: samba_manage_firewall | bool
+
+  - name: Open Samba in firewalld
+    ansible.posix.firewalld:
+      service: samba
+      permanent: true
+      immediate: true
+      state: enabled
+    when:
+    - samba_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: samba_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - samba_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Allow Samba in ufw
+    community.general.ufw:
+      rule: allow
+      port: "139,445"
+      proto: tcp
+    when:
+    - samba_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (samba_ufw_status.stdout | default(''))"
+
+  - name: Show Samba status
+    ansible.builtin.command: smbstatus
+    register: samba_status_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print Samba status
+    ansible.builtin.debug:
+      var: samba_status_out.stdout_lines
+
+  handlers:
+  - name: Restart Samba
+    ansible.builtin.systemd:
+      name: "{{ samba_service }}"
+      state: restarted
