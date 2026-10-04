@@ -1,0 +1,22 @@
+samba_workgroup: WORKGROUP
+samba_server_string: "Samba Server %v"
+samba_security: user
+samba_map_to_guest: Never
+samba_manage_firewall: true
+
+samba_users:
+  - name: sambauser
+    password: "MyPassword123!"
+
+samba_shares:
+  - name: shared
+    path: /srv/samba/shared
+    valid_users: sambauser
+    read_only: false
+    browsable: yes
+    guest_ok: no
+    owner: sambauser
+    group: sambauser
+    mode: "0755"
+    create_mask: "0644"
+    directory_mask: "0755"

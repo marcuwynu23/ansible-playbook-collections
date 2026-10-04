@@ -40,6 +40,11 @@
         service: smb
 
   pre_tasks:
+  - name: Cast string variables to proper types
+    ansible.builtin.set_fact:
+      samba_shares: "{{ samba_shares | from_json if samba_shares is string else samba_shares }}"
+      samba_users: "{{ samba_users | from_json if samba_users is string else samba_users }}"
+
   - name: Check that the OS family is supported
     ansible.builtin.assert:
       that: ansible_os_family in samba_os_config
@@ -70,9 +75,31 @@
     ansible.builtin.file:
       path: "{{ item.path }}"
       state: directory
-      mode: "0755"
-    loop: "{{ samba_shares }}"
+      owner: "{{ item.owner | default('root') }}"
+      group: "{{ item.group | default('root') }}"
+      mode: "{{ item.mode | default('0755') }}"
+    loop: "{{ samba_shares | from_json if samba_shares is string else samba_shares }}"
     when: samba_shares | length > 0
+
+  - name: Set ownership on share directories
+    ansible.builtin.file:
+      path: "{{ item.path }}"
+      state: directory
+      owner: "{{ item.owner | default('root') }}"
+      group: "{{ item.group | default('root') }}"
+      mode: "{{ item.mode | default('0755') }}"
+      recurse: true
+    loop: "{{ samba_shares | from_json if samba_shares is string else samba_shares }}"
+    when: samba_shares | length > 0
+
+  - name: Create system users for Samba
+    ansible.builtin.user:
+      name: "{{ item.name }}"
+      shell: /usr/sbin/nologin
+      create_home: false
+      state: present
+    loop: "{{ samba_users }}"
+    when: samba_users | length > 0
 
   - name: Create Samba users
     ansible.builtin.shell: |
@@ -80,6 +107,10 @@
     loop: "{{ samba_users }}"
     when: samba_users | length > 0
     no_log: true
+    register: samba_user_result
+    retries: 3
+    delay: 2
+    until: samba_user_result is succeeded
 
   - name: Enable and start Samba service
     ansible.builtin.systemd:
