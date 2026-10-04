@@ -1,0 +1,53 @@
+# {{ ansible_managed }}
+# Samba configuration managed by Ansible
+
+[global]
+   workgroup = {{ samba_workgroup }}
+   server string = {{ samba_server_string }}
+   security = {{ samba_security }}
+   map to guest = {{ samba_map_to_guest }}
+   log file = /var/log/samba/log.%m
+   max log size = 1000
+   logging = file
+   panic action = /usr/share/samba/panic-action %d
+   server role = standalone server
+   obey pam restrictions = yes
+   unix password sync = yes
+   passwd program = /usr/bin/passwd %u
+   passwd chat = *Enter\snew\s*\spassword:* %n\n *Retype\snew\s*\spassword:* %n\n *password\supdated\ssuccessfully* .
+   pam password change = yes
+
+{% if samba_shares is string %}
+{% set shares = samba_shares | from_json %}
+{% else %}
+{% set shares = samba_shares %}
+{% endif %}
+{% for share in shares %}
+[{{ share.name }}]
+   path = {{ share.path }}
+{% if share.valid_users is defined %}
+   valid users = {{ share.valid_users }}
+{% endif %}
+{% if share.read_only is defined %}
+   read only = {{ 'yes' if share.read_only else 'no' }}
+{% endif %}
+{% if share.browsable is defined %}
+   browsable = {{ share.browsable }}
+{% endif %}
+{% if share.guest_ok is defined %}
+   guest ok = {{ share.guest_ok }}
+{% endif %}
+{% if share.create_mask is defined %}
+   create mask = {{ share.create_mask }}
+{% endif %}
+{% if share.directory_mask is defined %}
+   directory mask = {{ share.directory_mask }}
+{% endif %}
+{% if share.owner is defined %}
+   force user = {{ share.owner }}
+{% endif %}
+{% if share.group is defined %}
+   force group = {{ share.group }}
+{% endif %}
+
+{% endfor %}
