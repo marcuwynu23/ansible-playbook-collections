@@ -59,6 +59,24 @@ cp inventory.ini.example inventory.ini
 ansible-playbook -i inventory.ini setup.yml
 ```
 
+### Using a vars file
+
+Copy the example vars file and customize it:
+
+```bash
+cp samba-vars.yml.example samba-vars.yml
+# Edit samba-vars.yml with your users, shares, and settings
+ansible-playbook -i inventory.ini setup.yml -e @samba-vars.yml
+```
+
+### Using inline variables
+
+```bash
+ansible-playbook -i inventory.ini setup.yml -e samba_workgroup=MYGROUP
+ansible-playbook -i inventory.ini setup.yml -e 'samba_shares=[{"name":"shared","path":"/srv/samba/shared","read_only":false}]'
+ansible-playbook -i inventory.ini setup.yml -e 'samba_users=[{"name":"sambauser","password":"MyPassword123!"}]'
+```
+
 Remove:
 
 ```bash
@@ -71,8 +89,50 @@ Useful commands:
 ```bash
 ansible-playbook -i inventory.ini setup.yml --check
 ansible-playbook -i inventory.ini setup.yml --diff
-ansible-playbook -i inventory.ini setup.yml -e samba_workgroup=MYGROUP
-ansible-playbook -i inventory.ini setup.yml -e samba_shares=[{name:shared,path:/srv/samba/shared}]
+ansible-playbook -i inventory.ini setup.yml --tags "samba"
+```
+
+## Accessing Samba shares from Linux clients
+
+```bash
+# Install Samba client
+apt install cifs-utils smbclient
+
+# List available shares
+smbclient -L //samba-server -U sambauser
+
+# Access share interactively
+smbclient //samba-server/shared -U sambauser
+
+# Mount Samba share
+mount -t cifs //samba-server/shared /mnt/samba -o username=sambauser
+
+# Add to /etc/fstab for persistence
+echo "//samba-server/shared /mnt/samba cifs credentials=/etc/samba/credentials,iocharset=utf8 0 0" >> /etc/fstab
+```
+
+Create `/etc/samba/credentials`:
+
+```
+username=sambauser
+password=MyPassword123!
+```
+
+```bash
+chmod 600 /etc/samba/credentials
+```
+
+### Accessing Samba shares from Windows clients
+
+```cmd
+:: Map network drive
+net use Z: \\samba-server\shared /user:sambauser MyPassword123!
+
+:: Or open in Explorer
+explorer \\samba-server\shared
+
+:: Disconnect
+net use Z: /delete
 ```
 
 ## Notes
