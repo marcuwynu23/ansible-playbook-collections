@@ -1,0 +1,134 @@
+---
+# setup.yml - Install and configure an NFS server (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e nfs_allowed_network=10.0.0.0/24
+#   ansible-playbook -i inventory setup.yml -e nfs_export_path=/data/share
+
+- name: Setup NFS server
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    nfs_export_path: /srv/nfs/share
+    nfs_allowed_network: "0.0.0.0/0"
+    nfs_export_options: "rw,sync,no_subtree_check"
+    nfs_export_owner: root
+    nfs_export_group: root
+    nfs_export_mode: "0755"
+    nfs_manage_firewall: true
+
+    # Per OS-family settings
+    nfs_os_config:
+      Debian:
+        packages: [ nfs-kernel-server, nfs-common ]
+        service: nfs-kernel-server
+      RedHat:
+        packages: [ nfs-utils ]
+        service: nfs-server
+      Suse:
+        packages: [ nfs-kernel-server ]
+        service: nfs-server
+      Archlinux:
+        packages: [ nfs-utils ]
+        service: nfs-server
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in nfs_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      nfs_packages: "{{ nfs_os_config[ansible_os_family].packages }}"
+      nfs_service: "{{ nfs_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Install NFS packages
+    ansible.builtin.package:
+      name: "{{ nfs_packages }}"
+      state: present
+
+  - name: Create export directory
+    ansible.builtin.file:
+      path: "{{ nfs_export_path }}"
+      state: directory
+      owner: "{{ nfs_export_owner }}"
+      group: "{{ nfs_export_group }}"
+      mode: "{{ nfs_export_mode }}"
+
+  - name: Configure /etc/exports
+    ansible.builtin.blockinfile:
+      path: /etc/exports
+      create: true
+      mode: "0644"
+      marker: "# {mark} ANSIBLE MANAGED NFS EXPORT"
+      block: "{{ nfs_export_path }} {{ nfs_allowed_network }}({{ nfs_export_options }})"
+    notify: Re-export shares
+
+  - name: Enable and start NFS service
+    ansible.builtin.systemd:
+      name: "{{ nfs_service }}"
+      enabled: true
+      state: started
+
+  # ---- Firewall (only if a firewall is actually running) ----
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+    when: nfs_manage_firewall | bool
+
+  - name: Open NFS in firewalld
+    ansible.posix.firewalld:
+      service: "{{ item }}"
+      permanent: true
+      immediate: true
+      state: enabled
+    loop: [ nfs, mountd, rpc-bind ]
+    when:
+    - nfs_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: nfs_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - nfs_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Allow NFS in ufw
+    community.general.ufw:
+      rule: allow
+      port: "2049"
+      proto: any
+      from_ip: "{{ nfs_allowed_network }}"
+    when:
+    - nfs_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (nfs_ufw_status.stdout | default(''))"
+
+  - name: Show active exports
+    ansible.builtin.command: exportfs -v
+    register: nfs_exports_out
+    changed_when: false
+
+  - name: Print exports
+    ansible.builtin.debug:
+      var: nfs_exports_out.stdout_lines
+
+  handlers:
+  - name: Re-export shares
+    ansible.builtin.command: exportfs -ra

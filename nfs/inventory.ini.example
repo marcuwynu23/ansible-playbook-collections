@@ -1,0 +1,6 @@
+[remote]
+remote  <ip>
+
+
+[remote:vars]
+ansible_user=root

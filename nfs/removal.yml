@@ -1,0 +1,128 @@
+---
+# removal.yml - Remove NFS server configuration and packages (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e nfs_remove_export_dir=true   # also deletes data!
+#   ansible-playbook -i inventory removal.yml -e nfs_remove_packages=false    # keep packages
+
+- name: Remove NFS server
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    nfs_export_path: /srv/nfs/share
+    nfs_allowed_network: "192.168.1.0/24"
+    nfs_remove_packages: true
+    nfs_remove_export_dir: false # DANGEROUS: deletes the shared data
+    nfs_manage_firewall: true
+
+    nfs_os_config:
+      Debian:
+        packages: [ nfs-kernel-server, nfs-common ]
+        service: nfs-kernel-server
+      RedHat:
+        packages: [ nfs-utils ]
+        service: nfs-server
+      Suse:
+        packages: [ nfs-kernel-server ]
+        service: nfs-server
+      Archlinux:
+        packages: [ nfs-utils ]
+        service: nfs-server
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in nfs_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      nfs_packages: "{{ nfs_os_config[ansible_os_family].packages }}"
+      nfs_service: "{{ nfs_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+
+  - name: Unexport all shares
+    ansible.builtin.command: exportfs -ua
+    changed_when: false
+    failed_when: false
+
+  - name: Stop and disable NFS service
+    ansible.builtin.systemd:
+      name: "{{ nfs_service }}"
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: (nfs_service ~ '.service') in ansible_facts.services
+
+  - name: Remove Ansible-managed block from /etc/exports
+    ansible.builtin.blockinfile:
+      path: /etc/exports
+      marker: "# {mark} ANSIBLE MANAGED NFS EXPORT"
+      state: absent
+    failed_when: false
+
+  # ---- Firewall cleanup ----
+  - name: Close NFS in firewalld
+    ansible.posix.firewalld:
+      service: "{{ item }}"
+      permanent: true
+      immediate: true
+      state: disabled
+    loop: [ nfs, mountd, rpc-bind ]
+    when:
+    - nfs_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: nfs_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - nfs_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Remove NFS rule from ufw
+    community.general.ufw:
+      rule: allow
+      port: "2049"
+      proto: any
+      from_ip: "{{ nfs_allowed_network }}"
+      delete: true
+    when:
+    - nfs_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (nfs_ufw_status.stdout | default(''))"
+
+  - name: Remove NFS packages
+    ansible.builtin.package:
+      name: "{{ nfs_packages }}"
+      state: absent
+    when: nfs_remove_packages | bool
+
+  - name: Remove export directory (and all data in it)
+    ansible.builtin.file:
+      path: "{{ nfs_export_path }}"
+      state: absent
+    when: nfs_remove_export_dir | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        NFS removed from {{ inventory_hostname }}. Export directory {{ 'deleted' if nfs_remove_export_dir | bool else 'kept' }}.
