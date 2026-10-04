@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# Lookbusy systemd service managed by Ansible
+
+[Unit]
+Description=Lookbusy - CPU, memory, disk, and network activity simulator
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/lookbusy -c {{ lookbusy_cpu_percent }} -m {{ lookbusy_mem_mb }} -d {{ lookbusy_disk_io_mb }} -b {{ lookbusy_network_interface }} -n {{ lookbusy_network_mbps }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
