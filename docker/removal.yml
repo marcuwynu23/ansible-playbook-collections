@@ -9,6 +9,7 @@
 # Usage:
 #   ansible-playbook -i inventory removal.yml
 #   ansible-playbook -i inventory removal.yml -e docker_remove_registry_data=true # also delete images!
+#   ansible-playbook -i inventory removal.yml -e docker_remove_registry_auth=false # keep htpasswd
 #   ansible-playbook -i inventory removal.yml -e docker_remove_packages=false     # keep packages
 
 - name: Remove Docker
@@ -22,6 +23,8 @@
     docker_manage_firewall: true
     docker_registry_port: 5000
     docker_registry_data_dir: /var/lib/registry
+    docker_remove_registry_auth: true
+    docker_registry_htpasswd_dir: /etc/docker-registry
 
     docker_os_config:
       Debian:
@@ -94,6 +97,12 @@
       state: absent
     when: docker_remove_registry_data | bool
 
+  - name: Remove registry authentication directory
+    ansible.builtin.file:
+      path: "{{ docker_registry_htpasswd_dir }}"
+      state: absent
+    when: docker_remove_registry_auth | bool
+
   - name: Close registry port in firewalld
     ansible.posix.firewalld:
       port: "{{ docker_registry_port }}/tcp"
@@ -140,4 +149,4 @@
   - name: Done
     ansible.builtin.debug:
       msg: >-
-        Docker removed from {{ inventory_hostname }}. Registry data {{ 'deleted' if docker_remove_registry_data | bool else 'kept' }}.
+        Docker removed from {{ inventory_hostname }}. Registry data {{ 'deleted' if docker_remove_registry_data | bool else 'kept' }}, registry auth {{ 'deleted' if docker_remove_registry_auth | bool else 'kept' }}.

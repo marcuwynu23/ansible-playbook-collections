@@ -5,6 +5,7 @@
 #            SUSE, Arch
 #
 # Requirements: ansible-galaxy collection install ansible.posix community.general community.docker
+#                pip install passlib   (required for registry authentication)
 #
 # Usage:
 #   ansible-playbook -i inventory setup.yml
@@ -33,6 +34,14 @@
     docker_registry_port: 5000
     docker_registry_data_dir: /var/lib/registry
 
+    docker_registry_auth: true
+    docker_registry_auth_realm: Registry Realm
+    docker_registry_htpasswd_dir: /etc/docker-registry
+    docker_registry_htpasswd_path: /etc/docker-registry/htpasswd
+    docker_registry_users:
+      - username: admin
+        password: "ChangeMe123!"
+
     docker_os_config:
       Debian:
         packages: [ docker.io ]
@@ -57,6 +66,7 @@
       docker_registry_mirrors: "{{ docker_registry_mirrors | from_json if docker_registry_mirrors is string else docker_registry_mirrors }}"
       docker_insecure_registries: "{{ docker_insecure_registries | from_json if docker_insecure_registries is string else docker_insecure_registries }}"
       docker_users: "{{ docker_users | from_json if docker_users is string else docker_users }}"
+      docker_registry_users: "{{ docker_registry_users | from_json if docker_registry_users is string else docker_registry_users }}"
 
   - name: Check that the OS family is supported
     ansible.builtin.assert:
@@ -112,6 +122,47 @@
       mode: "0755"
     when: docker_registry_enabled | bool
 
+  - name: Build registry container settings
+    ansible.builtin.set_fact:
+      docker_registry_volumes:
+        - "{{ docker_registry_data_dir }}:/var/lib/registry"
+      docker_registry_env: {}
+    when: docker_registry_enabled | bool
+
+  - name: Create registry auth directory
+    ansible.builtin.file:
+      path: "{{ docker_registry_htpasswd_dir }}"
+      state: directory
+      mode: "0755"
+    when:
+    - docker_registry_enabled | bool
+    - docker_registry_auth | bool
+
+  - name: Create registry htpasswd file
+    community.general.htpasswd:
+      path: "{{ docker_registry_htpasswd_path }}"
+      name: "{{ item.username }}"
+      password: "{{ item.password }}"
+      crypt_scheme: bcrypt
+      mode: "0640"
+    loop: "{{ docker_registry_users }}"
+    no_log: true
+    when:
+    - docker_registry_enabled | bool
+    - docker_registry_auth | bool
+    - docker_registry_users | length > 0
+
+  - name: Enable registry authentication
+    ansible.builtin.set_fact:
+      docker_registry_volumes: "{{ docker_registry_volumes + [docker_registry_htpasswd_path ~ ':/auth/htpasswd:ro'] }}"
+      docker_registry_env:
+        REGISTRY_AUTH: htpasswd
+        REGISTRY_AUTH_HTPASSWD_REALM: "{{ docker_registry_auth_realm }}"
+        REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+    when:
+    - docker_registry_enabled | bool
+    - docker_registry_auth | bool
+
   - name: Run local Docker registry
     community.docker.docker_container:
       name: registry
@@ -120,8 +171,8 @@
       restart_policy: always
       ports:
         - "{{ docker_registry_port }}:5000"
-      volumes:
-        - "{{ docker_registry_data_dir }}:/var/lib/registry"
+      volumes: "{{ docker_registry_volumes }}"
+      env: "{{ docker_registry_env }}"
     when: docker_registry_enabled | bool
 
   - name: Gather service facts

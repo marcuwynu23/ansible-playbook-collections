@@ -18,3 +18,12 @@ docker_registry_enabled: true
 docker_registry_image: registry:2
 docker_registry_port: 5000
 docker_registry_data_dir: /var/lib/registry
+
+# Registry authentication (htpasswd / bcrypt)
+docker_registry_auth: true
+docker_registry_auth_realm: Registry Realm
+docker_registry_htpasswd_dir: /etc/docker-registry
+docker_registry_htpasswd_path: /etc/docker-registry/htpasswd
+docker_registry_users:
+  - username: admin
+    password: "ChangeMe123!"
