@@ -1,0 +1,7 @@
+# Suricata IDS/IPS settings
+suricata_home_net: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"
+suricata_interfaces:
+  - eth0
+suricata_default_rule_path: /var/lib/suricata/rules
+suricata_rule_files:
+  - suricata.rules

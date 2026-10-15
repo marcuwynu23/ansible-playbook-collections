@@ -1,0 +1,35 @@
+%YAML 1.1
+---
+# {{ ansible_managed }}
+# Suricata configuration managed by Ansible
+
+vars:
+  address-groups:
+    HOME_NET: "{{ suricata_home_net }}"
+    EXTERNAL_NET: "!$HOME_NET"
+  port-groups:
+    HTTP_PORTS: "80"
+    SHELLCODE_PORTS: "!80"
+
+af-packet:
+{% for iface in suricata_interfaces %}
+  - interface: {{ iface }}
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+{% endfor %}
+
+default-rule-path: {{ suricata_default_rule_path }}
+rule-files:
+{% for rule in suricata_rule_files %}
+  - {{ rule }}
+{% endfor %}
+
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      types:
+        - alert:
+            tagged-packets: yes

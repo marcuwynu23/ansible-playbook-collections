@@ -1,0 +1,76 @@
+---
+# removal.yml - Remove Suricata configuration and packages (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e suricata_remove_packages=false # keep packages
+
+- name: Remove Suricata
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    suricata_remove_packages: true
+
+    suricata_os_config:
+      Debian:
+        packages: [ suricata ]
+        service: suricata
+      RedHat:
+        packages: [ suricata ]
+        service: suricata
+      Suse:
+        packages: [ suricata ]
+        service: suricata
+      Archlinux:
+        packages: [ suricata ]
+        service: suricata
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in suricata_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      suricata_packages: "{{ suricata_os_config[ansible_os_family].packages }}"
+      suricata_service: "{{ suricata_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable Suricata service
+    ansible.builtin.systemd:
+      name: "{{ suricata_service }}"
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: (suricata_service ~ '.service') in ansible_facts.services
+
+  - name: Remove Suricata configuration
+    ansible.builtin.file:
+      path: /etc/suricata/suricata.yaml
+      state: absent
+    failed_when: false
+
+  - name: Remove Suricata packages
+    ansible.builtin.package:
+      name: "{{ suricata_packages }}"
+      state: absent
+    when: suricata_remove_packages | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        Suricata removed from {{ inventory_hostname }}.

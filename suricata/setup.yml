@@ -1,0 +1,99 @@
+---
+# setup.yml - Install and configure Suricata (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e suricata_interfaces='[eth0,eth1]'
+#   ansible-playbook -i inventory setup.yml -e @suricata-vars.yml
+
+- name: Setup Suricata
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    suricata_home_net: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"
+    suricata_interfaces:
+      - eth0
+    suricata_default_rule_path: /var/lib/suricata/rules
+    suricata_rule_files:
+      - suricata.rules
+
+    suricata_os_config:
+      Debian:
+        packages: [ suricata ]
+        service: suricata
+      RedHat:
+        packages: [ suricata ]
+        service: suricata
+      Suse:
+        packages: [ suricata ]
+        service: suricata
+      Archlinux:
+        packages: [ suricata ]
+        service: suricata
+
+  pre_tasks:
+  - name: Cast list variables to proper types
+    ansible.builtin.set_fact:
+      suricata_interfaces: "{{ suricata_interfaces | from_json if suricata_interfaces is string else suricata_interfaces }}"
+      suricata_rule_files: "{{ suricata_rule_files | from_json if suricata_rule_files is string else suricata_rule_files }}"
+
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in suricata_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      suricata_packages: "{{ suricata_os_config[ansible_os_family].packages }}"
+      suricata_service: "{{ suricata_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Install Suricata packages
+    ansible.builtin.package:
+      name: "{{ suricata_packages }}"
+      state: present
+
+  - name: Configure /etc/suricata/suricata.yaml
+    ansible.builtin.template:
+      src: suricata.yaml.j2
+      dest: /etc/suricata/suricata.yaml
+      mode: "0644"
+    notify: Restart Suricata
+
+  - name: Validate Suricata configuration
+    ansible.builtin.command: suricata -T -c /etc/suricata/suricata.yaml
+    register: suricata_test_out
+    changed_when: false
+    failed_when: suricata_test_out.rc != 0
+
+  - name: Enable and start Suricata service
+    ansible.builtin.systemd:
+      name: "{{ suricata_service }}"
+      enabled: true
+      state: started
+
+  - name: Show Suricata status
+    ansible.builtin.command: systemctl status suricata --no-pager
+    register: suricata_status_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print Suricata status
+    ansible.builtin.debug:
+      var: suricata_status_out.stdout_lines
+
+  handlers:
+  - name: Restart Suricata
+    ansible.builtin.systemd:
+      name: "{{ suricata_service }}"
+      state: restarted
