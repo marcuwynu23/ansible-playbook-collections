@@ -1,0 +1,143 @@
+---
+# removal.yml - Remove Docker, registry, and packages (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general community.docker
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e docker_remove_registry_data=true # also delete images!
+#   ansible-playbook -i inventory removal.yml -e docker_remove_packages=false     # keep packages
+
+- name: Remove Docker
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    docker_remove_packages: true
+    docker_remove_registry_data: false
+    docker_manage_firewall: true
+    docker_registry_port: 5000
+    docker_registry_data_dir: /var/lib/registry
+
+    docker_os_config:
+      Debian:
+        packages: [ docker.io ]
+        compose_packages: [ docker-compose-plugin ]
+        service: docker
+      RedHat:
+        packages: [ docker ]
+        compose_packages: [ docker-compose-plugin ]
+        service: docker
+      Suse:
+        packages: [ docker ]
+        compose_packages: [ docker-compose-plugin ]
+        service: docker
+      Archlinux:
+        packages: [ docker ]
+        compose_packages: [ docker-compose ]
+        service: docker
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in docker_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      docker_packages: "{{ docker_os_config[ansible_os_family].packages }}"
+      docker_compose_packages: "{{ docker_os_config[ansible_os_family].compose_packages }}"
+      docker_service: "{{ docker_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Remove the local registry container
+    community.docker.docker_container:
+      name: registry
+      state: absent
+      keep_volumes: false
+    failed_when: false
+
+  - name: Remove the registry image
+    community.docker.docker_image:
+      name: registry
+      tag: "2"
+      state: absent
+    failed_when: false
+
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable Docker service
+    ansible.builtin.systemd:
+      name: "{{ docker_service }}"
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: (docker_service ~ '.service') in ansible_facts.services
+
+  - name: Remove Docker daemon configuration
+    ansible.builtin.file:
+      path: /etc/docker/daemon.json
+      state: absent
+    failed_when: false
+
+  - name: Remove registry data directory
+    ansible.builtin.file:
+      path: "{{ docker_registry_data_dir }}"
+      state: absent
+    when: docker_remove_registry_data | bool
+
+  - name: Close registry port in firewalld
+    ansible.posix.firewalld:
+      port: "{{ docker_registry_port }}/tcp"
+      permanent: true
+      immediate: true
+      state: disabled
+    when:
+    - docker_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: docker_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - docker_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Remove registry rule from ufw
+    community.general.ufw:
+      rule: allow
+      port: "{{ docker_registry_port }}"
+      proto: tcp
+      delete: true
+    when:
+    - docker_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (docker_ufw_status.stdout | default(''))"
+
+  - name: Remove Docker Compose packages
+    ansible.builtin.package:
+      name: "{{ docker_compose_packages }}"
+      state: absent
+    when: docker_remove_packages | bool
+
+  - name: Remove Docker packages
+    ansible.builtin.package:
+      name: "{{ docker_packages }}"
+      state: absent
+    when: docker_remove_packages | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        Docker removed from {{ inventory_hostname }}. Registry data {{ 'deleted' if docker_remove_registry_data | bool else 'kept' }}.

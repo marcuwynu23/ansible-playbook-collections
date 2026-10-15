@@ -1,0 +1,178 @@
+---
+# setup.yml - Install and configure Docker with a local registry (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general community.docker
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e docker_registry_enabled=false
+#   ansible-playbook -i inventory setup.yml -e 'docker_users=[alice,bob]'
+
+- name: Setup Docker with registry
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    docker_storage_driver: overlay2
+    docker_log_driver: json-file
+    docker_log_max_size: 10m
+    docker_log_max_file: "3"
+    docker_registry_mirrors: []
+    docker_insecure_registries:
+      - 127.0.0.1:5000
+    docker_users: []
+    docker_install_compose: true
+    docker_manage_firewall: true
+
+    docker_registry_enabled: true
+    docker_registry_image: registry:2
+    docker_registry_port: 5000
+    docker_registry_data_dir: /var/lib/registry
+
+    docker_os_config:
+      Debian:
+        packages: [ docker.io ]
+        compose_packages: [ docker-compose-plugin ]
+        service: docker
+      RedHat:
+        packages: [ docker ]
+        compose_packages: [ docker-compose-plugin ]
+        service: docker
+      Suse:
+        packages: [ docker ]
+        compose_packages: [ docker-compose-plugin ]
+        service: docker
+      Archlinux:
+        packages: [ docker ]
+        compose_packages: [ docker-compose ]
+        service: docker
+
+  pre_tasks:
+  - name: Cast list variables to proper types
+    ansible.builtin.set_fact:
+      docker_registry_mirrors: "{{ docker_registry_mirrors | from_json if docker_registry_mirrors is string else docker_registry_mirrors }}"
+      docker_insecure_registries: "{{ docker_insecure_registries | from_json if docker_insecure_registries is string else docker_insecure_registries }}"
+      docker_users: "{{ docker_users | from_json if docker_users is string else docker_users }}"
+
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in docker_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      docker_packages: "{{ docker_os_config[ansible_os_family].packages }}"
+      docker_compose_packages: "{{ docker_os_config[ansible_os_family].compose_packages }}"
+      docker_service: "{{ docker_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Install Docker packages
+    ansible.builtin.package:
+      name: "{{ docker_packages }}"
+      state: present
+
+  - name: Install Docker Compose plugin
+    ansible.builtin.package:
+      name: "{{ docker_compose_packages }}"
+      state: present
+    when: docker_install_compose | bool
+
+  - name: Configure /etc/docker/daemon.json
+    ansible.builtin.template:
+      src: daemon.json.j2
+      dest: /etc/docker/daemon.json
+      mode: "0644"
+    notify: Restart Docker
+
+  - name: Add users to the docker group
+    ansible.builtin.user:
+      name: "{{ item }}"
+      groups: docker
+      append: true
+    loop: "{{ docker_users }}"
+    when: docker_users | length > 0
+
+  - name: Enable and start Docker service
+    ansible.builtin.systemd:
+      name: "{{ docker_service }}"
+      enabled: true
+      state: started
+
+  - name: Create registry data directory
+    ansible.builtin.file:
+      path: "{{ docker_registry_data_dir }}"
+      state: directory
+      mode: "0755"
+    when: docker_registry_enabled | bool
+
+  - name: Run local Docker registry
+    community.docker.docker_container:
+      name: registry
+      image: "{{ docker_registry_image }}"
+      state: started
+      restart_policy: always
+      ports:
+        - "{{ docker_registry_port }}:5000"
+      volumes:
+        - "{{ docker_registry_data_dir }}:/var/lib/registry"
+    when: docker_registry_enabled | bool
+
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+    when: docker_manage_firewall | bool
+
+  - name: Open registry port in firewalld
+    ansible.posix.firewalld:
+      port: "{{ docker_registry_port }}/tcp"
+      permanent: true
+      immediate: true
+      state: enabled
+    when:
+    - docker_manage_firewall | bool
+    - docker_registry_enabled | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: docker_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - docker_manage_firewall | bool
+    - docker_registry_enabled | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Allow registry port in ufw
+    community.general.ufw:
+      rule: allow
+      port: "{{ docker_registry_port }}"
+      proto: tcp
+    when:
+    - docker_manage_firewall | bool
+    - docker_registry_enabled | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (docker_ufw_status.stdout | default(''))"
+
+  - name: Show Docker version
+    ansible.builtin.command: docker version --format '{{ '{{' }} .Server.Version {{ '}}' }}'
+    register: docker_version_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print Docker version
+    ansible.builtin.debug:
+      var: docker_version_out.stdout_lines
+
+  handlers:
+  - name: Restart Docker
+    ansible.builtin.systemd:
+      name: "{{ docker_service }}"
+      state: restarted

@@ -1,0 +1,20 @@
+# Docker daemon settings
+docker_storage_driver: overlay2
+docker_log_driver: json-file
+docker_log_max_size: 10m
+docker_log_max_file: "3"
+docker_registry_mirrors: []
+docker_insecure_registries:
+  - 127.0.0.1:5000
+
+# Add these users to the docker group
+docker_users: []
+
+# Docker Compose
+docker_install_compose: true
+
+# Local container registry
+docker_registry_enabled: true
+docker_registry_image: registry:2
+docker_registry_port: 5000
+docker_registry_data_dir: /var/lib/registry
