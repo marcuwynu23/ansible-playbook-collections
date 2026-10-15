@@ -1,0 +1,114 @@
+---
+# setup.yml - Install and configure Fail2Ban (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e fail2ban_maxretry=3
+#   ansible-playbook -i inventory setup.yml -e 'fail2ban_jails=[{"name":"sshd","enabled":true,"port":"ssh"}]'
+
+- name: Setup Fail2Ban
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    fail2ban_ignoreip:
+      - 127.0.0.1/8
+      - ::1
+    fail2ban_bantime: 10m
+    fail2ban_findtime: 10m
+    fail2ban_maxretry: 5
+    fail2ban_backend: auto
+    fail2ban_banaction: iptables-multiport
+    fail2ban_destemail: root@localhost
+    fail2ban_sender: fail2ban@localhost
+    fail2ban_mta: sendmail
+    fail2ban_action: "%(action_mwl)s"
+
+    fail2ban_jails:
+      - name: sshd
+        enabled: true
+        port: ssh
+        filter: sshd
+        maxretry: 5
+        bantime: 10m
+        findtime: 10m
+
+    fail2ban_os_config:
+      Debian:
+        packages: [ fail2ban ]
+        service: fail2ban
+      RedHat:
+        packages: [ fail2ban ]
+        service: fail2ban
+      Suse:
+        packages: [ fail2ban ]
+        service: fail2ban
+      Archlinux:
+        packages: [ fail2ban ]
+        service: fail2ban
+
+  pre_tasks:
+  - name: Cast list variables to proper types
+    ansible.builtin.set_fact:
+      fail2ban_ignoreip: "{{ fail2ban_ignoreip | from_json if fail2ban_ignoreip is string else fail2ban_ignoreip }}"
+      fail2ban_jails: "{{ fail2ban_jails | from_json if fail2ban_jails is string else fail2ban_jails }}"
+
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in fail2ban_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      fail2ban_packages: "{{ fail2ban_os_config[ansible_os_family].packages }}"
+      fail2ban_service: "{{ fail2ban_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Install Fail2Ban packages
+    ansible.builtin.package:
+      name: "{{ fail2ban_packages }}"
+      state: present
+
+  - name: Configure /etc/fail2ban/jail.local
+    ansible.builtin.template:
+      src: jail.local.j2
+      dest: /etc/fail2ban/jail.local
+      mode: "0644"
+    notify: Restart Fail2Ban
+
+  - name: Validate Fail2Ban configuration
+    ansible.builtin.command: fail2ban-client -t
+    register: fail2ban_test_out
+    changed_when: false
+    failed_when: fail2ban_test_out.rc != 0
+
+  - name: Enable and start Fail2Ban service
+    ansible.builtin.systemd:
+      name: "{{ fail2ban_service }}"
+      enabled: true
+      state: started
+
+  - name: Show Fail2Ban status
+    ansible.builtin.command: fail2ban-client status
+    register: fail2ban_status_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print Fail2Ban status
+    ansible.builtin.debug:
+      var: fail2ban_status_out.stdout_lines
+
+  handlers:
+  - name: Restart Fail2Ban
+    ansible.builtin.systemd:
+      name: "{{ fail2ban_service }}"
+      state: restarted

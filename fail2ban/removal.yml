@@ -1,0 +1,76 @@
+---
+# removal.yml - Remove Fail2Ban configuration and packages (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e fail2ban_remove_packages=false # keep packages
+
+- name: Remove Fail2Ban
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    fail2ban_remove_packages: true
+
+    fail2ban_os_config:
+      Debian:
+        packages: [ fail2ban ]
+        service: fail2ban
+      RedHat:
+        packages: [ fail2ban ]
+        service: fail2ban
+      Suse:
+        packages: [ fail2ban ]
+        service: fail2ban
+      Archlinux:
+        packages: [ fail2ban ]
+        service: fail2ban
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in fail2ban_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      fail2ban_packages: "{{ fail2ban_os_config[ansible_os_family].packages }}"
+      fail2ban_service: "{{ fail2ban_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable Fail2Ban service
+    ansible.builtin.systemd:
+      name: "{{ fail2ban_service }}"
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: (fail2ban_service ~ '.service') in ansible_facts.services
+
+  - name: Remove Fail2Ban configuration
+    ansible.builtin.file:
+      path: /etc/fail2ban/jail.local
+      state: absent
+    failed_when: false
+
+  - name: Remove Fail2Ban packages
+    ansible.builtin.package:
+      name: "{{ fail2ban_packages }}"
+      state: absent
+    when: fail2ban_remove_packages | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        Fail2Ban removed from {{ inventory_hostname }}.

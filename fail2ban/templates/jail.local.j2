@@ -1,0 +1,41 @@
+# {{ ansible_managed }}
+# fail2ban configuration managed by Ansible
+
+[DEFAULT]
+ignoreip = {{ fail2ban_ignoreip | join(' ') }}
+bantime = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
+backend = {{ fail2ban_backend }}
+banaction = {{ fail2ban_banaction }}
+destemail = {{ fail2ban_destemail }}
+sender = {{ fail2ban_sender }}
+mta = {{ fail2ban_mta }}
+action = {{ fail2ban_action }}
+
+{% for jail in fail2ban_jails %}
+[{{ jail.name }}]
+enabled = {{ 'true' if (jail.enabled | default(true)) else 'false' }}
+{% if jail.port is defined %}
+port = {{ jail.port }}
+{% endif %}
+{% if jail.filter is defined %}
+filter = {{ jail.filter }}
+{% endif %}
+{% if jail.logpath is defined %}
+logpath = {{ jail.logpath }}
+{% endif %}
+{% if jail.maxretry is defined %}
+maxretry = {{ jail.maxretry }}
+{% endif %}
+{% if jail.bantime is defined %}
+bantime = {{ jail.bantime }}
+{% endif %}
+{% if jail.findtime is defined %}
+findtime = {{ jail.findtime }}
+{% endif %}
+{% if jail.action is defined %}
+action = {{ jail.action }}
+{% endif %}
+
+{% endfor %}
