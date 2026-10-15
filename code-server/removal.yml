@@ -1,0 +1,101 @@
+---
+# removal.yml - Remove code-server (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e code_server_remove_config=false # keep config
+
+- name: Remove code-server
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    code_server_version: "4.96.0"
+    code_server_install_dir: /usr/lib/code-server
+    code_server_bin_dir: /usr/bin
+    code_server_config_dir: /etc/code-server
+    code_server_port: 8080
+    code_server_remove_config: true
+    code_server_manage_firewall: true
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable code-server service
+    ansible.builtin.systemd:
+      name: code-server
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: "'code-server.service' in ansible_facts.services"
+
+  - name: Remove code-server systemd service
+    ansible.builtin.file:
+      path: /etc/systemd/system/code-server.service
+      state: absent
+    failed_when: false
+
+  - name: Reload systemd daemon
+    ansible.builtin.systemd:
+      daemon_reload: true
+
+  - name: Remove code-server binary symlink
+    ansible.builtin.file:
+      path: "{{ code_server_bin_dir }}/code-server"
+      state: absent
+    failed_when: false
+
+  - name: Remove code-server install directory
+    ansible.builtin.file:
+      path: "{{ code_server_install_dir }}"
+      state: absent
+    failed_when: false
+
+  - name: Remove code-server configuration
+    ansible.builtin.file:
+      path: "{{ code_server_config_dir }}"
+      state: absent
+    when: code_server_remove_config | bool
+
+  - name: Close code-server port in firewalld
+    ansible.posix.firewalld:
+      port: "{{ code_server_port }}/tcp"
+      permanent: true
+      immediate: true
+      state: disabled
+    when:
+    - code_server_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: code_server_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - code_server_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Remove code-server rule from ufw
+    community.general.ufw:
+      rule: allow
+      port: "{{ code_server_port }}"
+      proto: tcp
+      delete: true
+    when:
+    - code_server_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (code_server_ufw_status.stdout | default(''))"
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        code-server removed from {{ inventory_hostname }}.

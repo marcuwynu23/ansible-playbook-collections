@@ -1,0 +1,12 @@
+[Unit]
+Description=code-server
+After=network.target
+
+[Service]
+Type=exec
+ExecStart={{ code_server_bin_dir }}/code-server
+Restart=always
+User={{ code_server_service_user }}
+
+[Install]
+WantedBy=multi-user.target

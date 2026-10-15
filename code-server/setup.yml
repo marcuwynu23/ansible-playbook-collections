@@ -1,0 +1,169 @@
+---
+# setup.yml - Install and configure code-server (VS Code in the browser)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e code_server_password=MyPass123
+#   ansible-playbook -i inventory setup.yml -e code_server_bind_addr=0.0.0.0:8080
+#   ansible-playbook -i inventory setup.yml -e @code-server-vars.yml
+
+- name: Setup code-server
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    code_server_version: "4.96.0"
+    code_server_install_dir: /usr/lib/code-server
+    code_server_bin_dir: /usr/bin
+    code_server_config_dir: /etc/code-server
+    code_server_service_user: root
+    code_server_bind_addr: 127.0.0.1:8080
+    code_server_port: 8080
+    code_server_auth: password
+    code_server_password: ""
+    code_server_cert: ""
+    code_server_manage_firewall: true
+
+  pre_tasks:
+  - name: Map architecture to release name
+    ansible.builtin.set_fact:
+      code_server_arch: >-
+        {{ 'amd64' if ansible_architecture == 'x86_64'
+           else 'arm64' if ansible_architecture == 'aarch64'
+           else ansible_architecture }}
+
+  - name: Check that the architecture is supported
+    ansible.builtin.assert:
+      that: code_server_arch in ['amd64', 'arm64']
+      fail_msg: >-
+        Unsupported architecture '{{ ansible_architecture }}' for code-server.
+      success_msg: >-
+        Detected {{ ansible_architecture }} ({{ code_server_arch }}) - supported.
+
+  tasks:
+  - name: Install code-server dependencies
+    ansible.builtin.package:
+      name: [ curl, tar, ca-certificates ]
+      state: present
+
+  - name: Download code-server release
+    ansible.builtin.get_url:
+      url: "https://github.com/coder/code-server/releases/download/v{{ code_server_version }}/code-server-{{ code_server_version }}-linux-{{ code_server_arch }}.tar.gz"
+      dest: "/tmp/code-server-{{ code_server_version }}-linux-{{ code_server_arch }}.tar.gz"
+      mode: "0644"
+
+  - name: Create code-server install directory
+    ansible.builtin.file:
+      path: "{{ code_server_install_dir }}"
+      state: directory
+      mode: "0755"
+
+  - name: Extract code-server
+    ansible.builtin.unarchive:
+      src: "/tmp/code-server-{{ code_server_version }}-linux-{{ code_server_arch }}.tar.gz"
+      dest: "{{ code_server_install_dir }}"
+      remote_src: true
+      extra_opts: [--strip-components=1]
+
+  - name: Symlink code-server binary
+    ansible.builtin.file:
+      src: "{{ code_server_install_dir }}/bin/code-server"
+      dest: "{{ code_server_bin_dir }}/code-server"
+      state: link
+      force: true
+
+  - name: Create code-server config directory
+    ansible.builtin.file:
+      path: "{{ code_server_config_dir }}"
+      state: directory
+      mode: "0755"
+
+  - name: Configure /etc/code-server/config.yaml
+    ansible.builtin.template:
+      src: config.yaml.j2
+      dest: "{{ code_server_config_dir }}/config.yaml"
+      mode: "0640"
+    no_log: true
+    notify: Restart code-server
+
+  - name: Create code-server systemd service
+    ansible.builtin.template:
+      src: code-server.service.j2
+      dest: /etc/systemd/system/code-server.service
+      mode: "0644"
+    notify: Restart code-server
+
+  - name: Reload systemd daemon
+    ansible.builtin.systemd:
+      daemon_reload: true
+
+  - name: Validate code-server binary
+    ansible.builtin.command: "{{ code_server_bin_dir }}/code-server --version"
+    register: code_server_version_out
+    changed_when: false
+
+  - name: Print code-server version
+    ansible.builtin.debug:
+      var: code_server_version_out.stdout_lines
+
+  - name: Enable and start code-server service
+    ansible.builtin.systemd:
+      name: code-server
+      enabled: true
+      state: started
+
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+    when: code_server_manage_firewall | bool
+
+  - name: Open code-server port in firewalld
+    ansible.posix.firewalld:
+      port: "{{ code_server_port }}/tcp"
+      permanent: true
+      immediate: true
+      state: enabled
+    when:
+    - code_server_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: code_server_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - code_server_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Allow code-server port in ufw
+    community.general.ufw:
+      rule: allow
+      port: "{{ code_server_port }}"
+      proto: tcp
+    when:
+    - code_server_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (code_server_ufw_status.stdout | default(''))"
+
+  - name: Show code-server status
+    ansible.builtin.command: systemctl status code-server --no-pager
+    register: code_server_status_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print code-server status
+    ansible.builtin.debug:
+      var: code_server_status_out.stdout_lines
+
+  handlers:
+  - name: Restart code-server
+    ansible.builtin.systemd:
+      name: code-server
+      state: restarted

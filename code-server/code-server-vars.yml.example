@@ -1,0 +1,17 @@
+# code-server release to install
+code_server_version: "4.96.0"
+
+# Installation paths
+code_server_install_dir: /usr/lib/code-server
+code_server_bin_dir: /usr/bin
+code_server_config_dir: /etc/code-server
+
+# Service user
+code_server_service_user: root
+
+# Server settings
+code_server_bind_addr: 127.0.0.1:8080
+code_server_port: 8080
+code_server_auth: password
+code_server_password: ""
+code_server_cert: ""

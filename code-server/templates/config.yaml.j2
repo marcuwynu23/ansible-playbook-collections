@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+# code-server configuration managed by Ansible
+
+bind-addr: {{ code_server_bind_addr }}
+auth: {{ code_server_auth }}
+{% if code_server_password is defined and code_server_password | length > 0 %}
+password: {{ code_server_password }}
+{% endif %}
+{% if code_server_cert is defined and code_server_cert | length > 0 %}
+cert: {{ code_server_cert }}
+{% endif %}
