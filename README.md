@@ -45,13 +45,15 @@ flowchart TD
     A --> E[Security]
     A --> F[Monitoring]
     A --> G[Web Servers]
+    A --> H[Containerization]
 
     B --> B1[nfs, glusterfs, ceph]
     C --> C1[firewall, dns, dhcp, haproxy, squid]
-    D --> D1[docker, code-server, kubernetes, terraform]
+    D --> D1[code-server, kubernetes, terraform]
     E --> E1[hardening, fail2ban, suricata, vault]
     F --> F1[prometheus, grafana, zabbix, fluentbit]
     G --> G1[nginx, apache, caddy]
+    H --> H1[docker, podman, kubernetes]
 
     style A fill:#EE0000,color:#fff
 ```
@@ -67,9 +69,12 @@ flowchart TD
 - [haproxy](./haproxy)
 - [squid](./squid)
 
-### Dev Tools
+### Containerization
 
 - [docker](./docker)
+
+### Dev Tools
+
 - [code-server](./code-server)
 
 ### Logging
