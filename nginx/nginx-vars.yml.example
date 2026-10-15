@@ -1,0 +1,21 @@
+# nginx global settings
+nginx_worker_processes: auto
+nginx_worker_connections: 1024
+nginx_keepalive_timeout: 65
+nginx_gzip: "on"
+
+# Virtual hosts (server blocks)
+nginx_sites: []
+# nginx_sites:
+#   - server_name: example.com
+#     listen: "80"
+#     root: /var/www/example.com
+#     index: index.html index.htm
+#   - server_name: secure.example.com
+#     listen: "443"
+#     root: /var/www/secure
+#     index: index.html
+#     ssl_certificate: /etc/nginx/ssl/example.com.crt
+#     ssl_certificate_key: /etc/nginx/ssl/example.com.key
+#     extra_directives:
+#       - "add_header Strict-Transport-Security \"max-age=31536000\" always;"

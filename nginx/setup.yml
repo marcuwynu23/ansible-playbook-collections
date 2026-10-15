@@ -1,0 +1,147 @@
+---
+# setup.yml - Install and configure nginx (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e nginx_worker_processes=2
+#   ansible-playbook -i inventory setup.yml -e 'nginx_sites=[{"server_name":"example.com","root":"/var/www/example.com"}]'
+
+- name: Setup nginx
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    nginx_worker_processes: auto
+    nginx_worker_connections: 1024
+    nginx_keepalive_timeout: 65
+    nginx_gzip: "on"
+    nginx_sites: []
+    nginx_manage_firewall: true
+
+    nginx_os_config:
+      Debian:
+        packages: [ nginx ]
+        service: nginx
+        user: www-data
+      RedHat:
+        packages: [ nginx ]
+        service: nginx
+        user: nginx
+      Suse:
+        packages: [ nginx ]
+        service: nginx
+        user: wwwrun
+      Archlinux:
+        packages: [ nginx ]
+        service: nginx
+        user: http
+
+  pre_tasks:
+  - name: Cast list variables to proper types
+    ansible.builtin.set_fact:
+      nginx_sites: "{{ nginx_sites | from_json if nginx_sites is string else nginx_sites }}"
+
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in nginx_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      nginx_packages: "{{ nginx_os_config[ansible_os_family].packages }}"
+      nginx_service: "{{ nginx_os_config[ansible_os_family].service }}"
+      nginx_user: "{{ nginx_os_config[ansible_os_family].user }}"
+
+  tasks:
+  - name: Install nginx packages
+    ansible.builtin.package:
+      name: "{{ nginx_packages }}"
+      state: present
+
+  - name: Configure /etc/nginx/nginx.conf
+    ansible.builtin.template:
+      src: nginx.conf.j2
+      dest: /etc/nginx/nginx.conf
+      mode: "0644"
+    notify: Restart nginx
+
+  - name: Create site document roots
+    ansible.builtin.file:
+      path: "{{ item.root }}"
+      state: directory
+      owner: "{{ nginx_user }}"
+      group: "{{ nginx_user }}"
+      mode: "0755"
+    loop: "{{ nginx_sites }}"
+    when: nginx_sites | length > 0
+
+  - name: Validate nginx configuration
+    ansible.builtin.command: nginx -t
+    register: nginx_test_out
+    changed_when: false
+    failed_when: nginx_test_out.rc != 0
+
+  - name: Enable and start nginx service
+    ansible.builtin.systemd:
+      name: "{{ nginx_service }}"
+      enabled: true
+      state: started
+
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+    when: nginx_manage_firewall | bool
+
+  - name: Open nginx in firewalld
+    ansible.posix.firewalld:
+      service: "{{ item }}"
+      permanent: true
+      immediate: true
+      state: enabled
+    loop: [ http, https ]
+    when:
+    - nginx_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: nginx_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - nginx_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Allow nginx in ufw
+    community.general.ufw:
+      rule: allow
+      name: "Nginx Full"
+    when:
+    - nginx_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (nginx_ufw_status.stdout | default(''))"
+
+  - name: Show nginx status
+    ansible.builtin.command: systemctl status nginx --no-pager
+    register: nginx_status_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print nginx status
+    ansible.builtin.debug:
+      var: nginx_status_out.stdout_lines
+
+  handlers:
+  - name: Restart nginx
+    ansible.builtin.systemd:
+      name: "{{ nginx_service }}"
+      state: restarted

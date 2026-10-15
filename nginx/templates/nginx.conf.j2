@@ -1,0 +1,47 @@
+user {{ nginx_user }};
+worker_processes {{ nginx_worker_processes }};
+pid /run/nginx.pid;
+
+events {
+    worker_connections {{ nginx_worker_connections }};
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+    error_log  /var/log/nginx/error.log warn;
+
+    sendfile        on;
+    tcp_nopush      on;
+    tcp_nodelay     on;
+    keepalive_timeout {{ nginx_keepalive_timeout }};
+    types_hash_max_size 2048;
+
+    gzip {{ nginx_gzip }};
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+{% for site in nginx_sites %}
+    server {
+{% if site.ssl_certificate is defined %}
+        listen {{ site.listen | default('443') }} ssl;
+        ssl_certificate {{ site.ssl_certificate }};
+        ssl_certificate_key {{ site.ssl_certificate_key }};
+{% else %}
+        listen {{ site.listen | default('80') }};
+{% endif %}
+        server_name {{ site.server_name | default('_') }};
+        root {{ site.root }};
+        index {{ site.index | default('index.html index.htm') }};
+{% for line in site.extra_directives | default([]) %}
+        {{ line }}
+{% endfor %}
+    }
+
+{% endfor %}
+}
