@@ -1,0 +1,108 @@
+---
+# setup.yml - Install and configure Fluent Bit (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e fluentbit_http_port=2021
+#   ansible-playbook -i inventory setup.yml -e @fluentbit-vars.yml
+
+- name: Setup Fluent Bit
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    fluentbit_flush: 1
+    fluentbit_log_level: info
+    fluentbit_http_server: "On"
+    fluentbit_http_port: 2020
+
+    fluentbit_inputs:
+      - name: tail
+        options:
+          Path: /var/log/syslog
+          Tag: host.syslog
+
+    fluentbit_outputs:
+      - name: stdout
+        match: "*"
+        options: {}
+
+    fluentbit_os_config:
+      Debian:
+        packages: [ fluent-bit ]
+        service: fluent-bit
+      RedHat:
+        packages: [ fluent-bit ]
+        service: fluent-bit
+      Suse:
+        packages: [ fluent-bit ]
+        service: fluent-bit
+      Archlinux:
+        packages: [ fluent-bit ]
+        service: fluent-bit
+
+  pre_tasks:
+  - name: Cast list variables to proper types
+    ansible.builtin.set_fact:
+      fluentbit_inputs: "{{ fluentbit_inputs | from_json if fluentbit_inputs is string else fluentbit_inputs }}"
+      fluentbit_outputs: "{{ fluentbit_outputs | from_json if fluentbit_outputs is string else fluentbit_outputs }}"
+
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in fluentbit_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      fluentbit_packages: "{{ fluentbit_os_config[ansible_os_family].packages }}"
+      fluentbit_service: "{{ fluentbit_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Install Fluent Bit packages
+    ansible.builtin.package:
+      name: "{{ fluentbit_packages }}"
+      state: present
+
+  - name: Configure /etc/fluent-bit/fluent-bit.conf
+    ansible.builtin.template:
+      src: fluent-bit.conf.j2
+      dest: /etc/fluent-bit/fluent-bit.conf
+      mode: "0644"
+    notify: Restart Fluent Bit
+
+  - name: Validate Fluent Bit configuration
+    ansible.builtin.command: fluent-bit --dry-run --config=/etc/fluent-bit/fluent-bit.conf
+    register: fluentbit_test_out
+    changed_when: false
+    failed_when: fluentbit_test_out.rc != 0
+
+  - name: Enable and start Fluent Bit service
+    ansible.builtin.systemd:
+      name: "{{ fluentbit_service }}"
+      enabled: true
+      state: started
+
+  - name: Show Fluent Bit status
+    ansible.builtin.command: systemctl status fluent-bit --no-pager
+    register: fluentbit_status_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print Fluent Bit status
+    ansible.builtin.debug:
+      var: fluentbit_status_out.stdout_lines
+
+  handlers:
+  - name: Restart Fluent Bit
+    ansible.builtin.systemd:
+      name: "{{ fluentbit_service }}"
+      state: restarted

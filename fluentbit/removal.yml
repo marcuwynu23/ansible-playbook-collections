@@ -1,0 +1,76 @@
+---
+# removal.yml - Remove Fluent Bit configuration and packages (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e fluentbit_remove_packages=false # keep packages
+
+- name: Remove Fluent Bit
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    fluentbit_remove_packages: true
+
+    fluentbit_os_config:
+      Debian:
+        packages: [ fluent-bit ]
+        service: fluent-bit
+      RedHat:
+        packages: [ fluent-bit ]
+        service: fluent-bit
+      Suse:
+        packages: [ fluent-bit ]
+        service: fluent-bit
+      Archlinux:
+        packages: [ fluent-bit ]
+        service: fluent-bit
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in fluentbit_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      fluentbit_packages: "{{ fluentbit_os_config[ansible_os_family].packages }}"
+      fluentbit_service: "{{ fluentbit_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable Fluent Bit service
+    ansible.builtin.systemd:
+      name: "{{ fluentbit_service }}"
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: (fluentbit_service ~ '.service') in ansible_facts.services
+
+  - name: Remove Fluent Bit configuration
+    ansible.builtin.file:
+      path: /etc/fluent-bit/fluent-bit.conf
+      state: absent
+    failed_when: false
+
+  - name: Remove Fluent Bit packages
+    ansible.builtin.package:
+      name: "{{ fluentbit_packages }}"
+      state: absent
+    when: fluentbit_remove_packages | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        Fluent Bit removed from {{ inventory_hostname }}.

@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+# Fluent Bit configuration managed by Ansible
+
+[SERVICE]
+    Flush {{ fluentbit_flush }}
+    Daemon Off
+    Log_Level {{ fluentbit_log_level }}
+    Parsers_File parsers.conf
+    HTTP_Server {{ fluentbit_http_server }}
+    HTTP_Listen 0.0.0.0
+    HTTP_Port {{ fluentbit_http_port }}
+
+{% for input in fluentbit_inputs %}
+[INPUT]
+    Name {{ input.name }}
+{% for key, value in (input.options | default({})).items() %}
+    {{ key }} {{ value }}
+{% endfor %}
+
+{% endfor %}
+{% for output in fluentbit_outputs %}
+[OUTPUT]
+    Name {{ output.name }}
+    Match {{ output.match | default('*') }}
+{% for key, value in (output.options | default({})).items() %}
+    {{ key }} {{ value }}
+{% endfor %}
+
+{% endfor %}

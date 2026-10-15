@@ -1,0 +1,26 @@
+# Fluent Bit service settings
+fluentbit_flush: 1
+fluentbit_log_level: info
+fluentbit_http_server: "On"
+fluentbit_http_port: 2020
+
+# Inputs
+fluentbit_inputs:
+  - name: tail
+    options:
+      Path: /var/log/syslog
+      Tag: host.syslog
+
+# Outputs
+fluentbit_outputs:
+  - name: stdout
+    match: "*"
+    options: {}
+# fluentbit_outputs:
+#   - name: es
+#     match: "*"
+#     options:
+#       Host: elasticsearch.example.com
+#       Port: 9200
+#       Index: fluentbit
+#       Type: _doc
