@@ -47,16 +47,39 @@ flowchart TD
     A --> G[Web Servers]
 
     B --> B1[nfs, glusterfs, ceph]
-    C --> C1[firewall, dns, dhcp]
-    D --> D1[docker, kubernetes, terraform]
-    E --> E1[hardening, fail2ban, vault]
-    F --> F1[prometheus, grafana, zabbix]
+    C --> C1[firewall, dns, dhcp, haproxy, squid]
+    D --> D1[docker, code-server, kubernetes, terraform]
+    E --> E1[hardening, fail2ban, suricata, vault]
+    F --> F1[prometheus, grafana, zabbix, fluentbit]
     G --> G1[nginx, apache, caddy]
 
     style A fill:#EE0000,color:#fff
 ```
 
 ## Available Playbooks
+
+### Web Servers
+
+- [nginx](./nginx)
+
+### Networking
+
+- [haproxy](./haproxy)
+- [squid](./squid)
+
+### Dev Tools
+
+- [docker](./docker)
+- [code-server](./code-server)
+
+### Logging
+
+- [fluentbit](./fluentbit)
+
+### Security
+
+- [fail2ban](./fail2ban)
+- [suricata](./suricata)
 
 ### Storage
 
