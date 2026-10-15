@@ -1,0 +1,24 @@
+# haproxy global and defaults settings
+haproxy_global_maxconn: 4096
+
+haproxy_defaults_mode: http
+haproxy_defaults_timeout_connect: 5000
+haproxy_defaults_timeout_client: 50000
+haproxy_defaults_timeout_server: 50000
+haproxy_defaults_retries: 3
+
+# Frontends (listeners)
+haproxy_frontends:
+  - name: http-in
+    bind: "*:80"
+    default_backend: webservers
+
+# Backends (server pools)
+haproxy_backends:
+  - name: webservers
+    balance: roundrobin
+    servers:
+      - name: web1
+        address: 127.0.0.1
+        port: 8080
+        options: check

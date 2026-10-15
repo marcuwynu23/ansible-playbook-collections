@@ -1,0 +1,150 @@
+---
+# setup.yml - Install and configure HAProxy (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory setup.yml
+#   ansible-playbook -i inventory setup.yml -e haproxy_global_maxconn=8192
+#   ansible-playbook -i inventory setup.yml -e @haproxy-vars.yml
+
+- name: Setup HAProxy
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    haproxy_global_maxconn: 4096
+    haproxy_defaults_mode: http
+    haproxy_defaults_timeout_connect: 5000
+    haproxy_defaults_timeout_client: 50000
+    haproxy_defaults_timeout_server: 50000
+    haproxy_defaults_retries: 3
+
+    haproxy_frontends:
+      - name: http-in
+        bind: "*:80"
+        default_backend: webservers
+
+    haproxy_backends:
+      - name: webservers
+        balance: roundrobin
+        servers:
+          - name: web1
+            address: 127.0.0.1
+            port: 8080
+            options: check
+
+    haproxy_manage_firewall: true
+    haproxy_firewall_port: "80"
+
+    haproxy_os_config:
+      Debian:
+        packages: [ haproxy ]
+        service: haproxy
+      RedHat:
+        packages: [ haproxy ]
+        service: haproxy
+      Suse:
+        packages: [ haproxy ]
+        service: haproxy
+      Archlinux:
+        packages: [ haproxy ]
+        service: haproxy
+
+  pre_tasks:
+  - name: Cast list variables to proper types
+    ansible.builtin.set_fact:
+      haproxy_frontends: "{{ haproxy_frontends | from_json if haproxy_frontends is string else haproxy_frontends }}"
+      haproxy_backends: "{{ haproxy_backends | from_json if haproxy_backends is string else haproxy_backends }}"
+
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in haproxy_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      haproxy_packages: "{{ haproxy_os_config[ansible_os_family].packages }}"
+      haproxy_service: "{{ haproxy_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Install HAProxy packages
+    ansible.builtin.package:
+      name: "{{ haproxy_packages }}"
+      state: present
+
+  - name: Configure /etc/haproxy/haproxy.cfg
+    ansible.builtin.template:
+      src: haproxy.cfg.j2
+      dest: /etc/haproxy/haproxy.cfg
+      mode: "0644"
+    notify: Restart HAProxy
+
+  - name: Validate HAProxy configuration
+    ansible.builtin.command: haproxy -c -f /etc/haproxy/haproxy.cfg
+    register: haproxy_test_out
+    changed_when: false
+    failed_when: haproxy_test_out.rc != 0
+
+  - name: Enable and start HAProxy service
+    ansible.builtin.systemd:
+      name: "{{ haproxy_service }}"
+      enabled: true
+      state: started
+
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+    when: haproxy_manage_firewall | bool
+
+  - name: Open HAProxy port in firewalld
+    ansible.posix.firewalld:
+      port: "{{ haproxy_firewall_port }}/tcp"
+      permanent: true
+      immediate: true
+      state: enabled
+    when:
+    - haproxy_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: haproxy_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - haproxy_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Allow HAProxy port in ufw
+    community.general.ufw:
+      rule: allow
+      port: "80"
+      proto: tcp
+    when:
+    - haproxy_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (haproxy_ufw_status.stdout | default(''))"
+
+  - name: Show HAProxy stats
+    ansible.builtin.command: echo "show stat" | socat stdio /run/haproxy/admin.sock
+    register: haproxy_stats_out
+    changed_when: false
+    failed_when: false
+
+  - name: Print HAProxy stats
+    ansible.builtin.debug:
+      var: haproxy_stats_out.stdout_lines
+
+  handlers:
+  - name: Restart HAProxy
+    ansible.builtin.systemd:
+      name: "{{ haproxy_service }}"
+      state: restarted

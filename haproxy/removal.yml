@@ -1,0 +1,109 @@
+---
+# removal.yml - Remove HAProxy configuration and packages (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e haproxy_remove_packages=false # keep packages
+
+- name: Remove HAProxy
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    haproxy_remove_packages: true
+    haproxy_manage_firewall: true
+    haproxy_firewall_port: "80"
+
+    haproxy_os_config:
+      Debian:
+        packages: [ haproxy ]
+        service: haproxy
+      RedHat:
+        packages: [ haproxy ]
+        service: haproxy
+      Suse:
+        packages: [ haproxy ]
+        service: haproxy
+      Archlinux:
+        packages: [ haproxy ]
+        service: haproxy
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in haproxy_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      haproxy_packages: "{{ haproxy_os_config[ansible_os_family].packages }}"
+      haproxy_service: "{{ haproxy_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable HAProxy service
+    ansible.builtin.systemd:
+      name: "{{ haproxy_service }}"
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: (haproxy_service ~ '.service') in ansible_facts.services
+
+  - name: Remove HAProxy configuration
+    ansible.builtin.file:
+      path: /etc/haproxy/haproxy.cfg
+      state: absent
+    failed_when: false
+
+  - name: Close HAProxy port in firewalld
+    ansible.posix.firewalld:
+      port: "{{ haproxy_firewall_port }}/tcp"
+      permanent: true
+      immediate: true
+      state: disabled
+    when:
+    - haproxy_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: haproxy_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - haproxy_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Remove HAProxy rule from ufw
+    community.general.ufw:
+      rule: allow
+      port: "{{ haproxy_firewall_port }}"
+      proto: tcp
+      delete: true
+    when:
+    - haproxy_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (haproxy_ufw_status.stdout | default(''))"
+
+  - name: Remove HAProxy packages
+    ansible.builtin.package:
+      name: "{{ haproxy_packages }}"
+      state: absent
+    when: haproxy_remove_packages | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        HAProxy removed from {{ inventory_hostname }}.
