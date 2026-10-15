@@ -1,0 +1,118 @@
+---
+# removal.yml - Remove Squid configuration and packages (multi-distro)
+#
+# Supported: Debian/Ubuntu, RedHat family (Fedora, RHEL, CentOS, Rocky, Alma),
+#            SUSE, Arch
+#
+# Requirements: ansible-galaxy collection install ansible.posix community.general
+#
+# Usage:
+#   ansible-playbook -i inventory removal.yml
+#   ansible-playbook -i inventory removal.yml -e squid_remove_cache=true # also delete cached data!
+#   ansible-playbook -i inventory removal.yml -e squid_remove_packages=false # keep packages
+
+- name: Remove Squid
+  hosts: remote
+  become: true
+  gather_facts: true
+
+  vars:
+    squid_http_port: 3128
+    squid_cache_dir: /var/spool/squid
+    squid_remove_packages: true
+    squid_remove_cache: false
+    squid_manage_firewall: true
+
+    squid_os_config:
+      Debian:
+        packages: [ squid ]
+        service: squid
+      RedHat:
+        packages: [ squid ]
+        service: squid
+      Suse:
+        packages: [ squid ]
+        service: squid
+      Archlinux:
+        packages: [ squid ]
+        service: squid
+
+  pre_tasks:
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in squid_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Set OS-specific facts
+    ansible.builtin.set_fact:
+      squid_packages: "{{ squid_os_config[ansible_os_family].packages }}"
+      squid_service: "{{ squid_os_config[ansible_os_family].service }}"
+
+  tasks:
+  - name: Gather service facts
+    ansible.builtin.service_facts:
+
+  - name: Stop and disable Squid service
+    ansible.builtin.systemd:
+      name: "{{ squid_service }}"
+      state: stopped
+      enabled: false
+    failed_when: false
+    when: (squid_service ~ '.service') in ansible_facts.services
+
+  - name: Remove Squid configuration
+    ansible.builtin.file:
+      path: /etc/squid/squid.conf
+      state: absent
+    failed_when: false
+
+  - name: Remove Squid cache directory
+    ansible.builtin.file:
+      path: "{{ squid_cache_dir }}"
+      state: absent
+    when: squid_remove_cache | bool
+
+  - name: Close Squid port in firewalld
+    ansible.posix.firewalld:
+      port: "{{ squid_http_port }}/tcp"
+      permanent: true
+      immediate: true
+      state: disabled
+    when:
+    - squid_manage_firewall | bool
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+  - name: Check ufw status
+    ansible.builtin.command: ufw status
+    register: squid_ufw_status
+    changed_when: false
+    failed_when: false
+    when:
+    - squid_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Remove Squid rule from ufw
+    community.general.ufw:
+      rule: allow
+      port: "{{ squid_http_port }}"
+      proto: tcp
+      delete: true
+    when:
+    - squid_manage_firewall | bool
+    - ansible_os_family == 'Debian'
+    - "'Status: active' in (squid_ufw_status.stdout | default(''))"
+
+  - name: Remove Squid packages
+    ansible.builtin.package:
+      name: "{{ squid_packages }}"
+      state: absent
+    when: squid_remove_packages | bool
+
+  - name: Done
+    ansible.builtin.debug:
+      msg: >-
+        Squid removed from {{ inventory_hostname }}. Cache {{ 'deleted' if squid_remove_cache | bool else 'kept' }}.

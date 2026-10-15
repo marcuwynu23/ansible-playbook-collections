@@ -1,0 +1,13 @@
+# Squid proxy settings
+squid_http_port: 3128
+squid_visible_hostname: proxy
+squid_cache_mem: 256 MB
+squid_maximum_object_size: 100 MB
+squid_cache_dir: /var/spool/squid
+squid_cache_size: 1000
+
+# Networks allowed to use the proxy (ACL: localnet)
+squid_allowed_networks:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
