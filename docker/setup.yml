@@ -48,23 +48,19 @@
 
     docker_os_config:
       Debian:
-        packages: [ docker.io ]
-        compose_packages: [ docker-compose ]
-        service: docker
-        repo_url: "{{ docker_repo_url_apt }}"
-        gpg_key: "{{ docker_gpg_key_url }}"
-      RedHat:
-        packages: []
+        packages: [ docker-ce, docker-ce-cli, docker-ce-rootless-extras ]
         compose_packages: [ docker-compose-plugin ]
         service: docker
-        repo_url: "{{ docker_repo_url_yum }}"
-        gpg_key: "{{ docker_gpg_key_url }}"
+      RedHat:
+        packages: [ docker-ce, docker-ce-cli ]
+        compose_packages: [ docker-compose-plugin ]
+        service: docker
       Suse:
-        packages: []
+        packages: [ docker-ce, docker-ce-cli ]
         compose_packages: [ docker-compose-plugin ]
         service: docker
       Archlinux:
-        packages: []
+        packages: [ docker ]
         compose_packages: [ docker-compose ]
         service: docker
 
@@ -76,25 +72,38 @@
       docker_users: "{{ docker_users | from_json if docker_users is string else docker_users }}"
       docker_registry_users: "{{ docker_registry_users | from_json if docker_registry_users is string else docker_registry_users }}"
 
+  - name: Check that the OS family is supported
+    ansible.builtin.assert:
+      that: ansible_os_family in docker_os_config
+      fail_msg: >-
+        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      success_msg: >-
+        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+
+  - name: Install passlib for registry auth
+    ansible.builtin.package:
+      name: python3-passlib
+      state: present
+    when: ansible_os_family == 'Debian'
+
   - name: Add Docker GPG key
     ansible.builtin.apt_key:
       url: "{{ docker_gpg_key_url }}"
       state: present
     when: ansible_os_family == 'Debian'
 
+  - name: Remove duplicate Docker APT entries
+    ansible.builtin.command: grep -v "x86_64" /etc/apt/sources.list.d/docker.list > /tmp/docker.list.tmp && mv /tmp/docker.list.tmp /etc/apt/sources.list.d/docker.list
+    changed_when: false
+    failed_when: false
+    when: ansible_os_family == 'Debian'
+
   - name: Add Docker APT repository
     ansible.builtin.lineinfile:
       path: /etc/apt/sources.list.d/docker.list
-      line: "deb [arch={{ ansible_architecture }}] {{ docker_repo_url_apt }} {{ ansible_distribution_release }} stable"
+      line: "deb [arch=amd64] {{ docker_repo_url_apt }} {{ ansible_distribution_release }} stable"
       state: present
       create: true
-    when: ansible_os_family == 'Debian'
-
-  - name: Update apt cache and install Docker
-    ansible.builtin.apt:
-      name: docker-ce
-      state: present
-      update_cache: true
     when: ansible_os_family == 'Debian'
 
   - name: Add Docker YUM repository
@@ -106,6 +115,17 @@
       gpgcheck: true
     when: ansible_os_family == 'RedHat'
 
+  - name: Update apt cache
+    ansible.builtin.apt:
+      update_cache: true
+    when: ansible_os_family == 'Debian'
+
+  - name: Remove old docker.io package
+    ansible.builtin.package:
+      name: docker.io
+      state: absent
+    when: ansible_os_family == 'Debian'
+
   - name: Set OS-specific facts
     ansible.builtin.set_fact:
       docker_packages: "{{ docker_os_config[ansible_os_family].packages }}"
@@ -113,19 +133,17 @@
       docker_service: "{{ docker_os_config[ansible_os_family].service }}"
 
   tasks:
-  - name: Install Docker packages
+  - name: Install Docker CE packages
     ansible.builtin.package:
-      name: "{{ docker_os_config[ansible_os_family].packages | default(['docker.io']) | first }}"
+      name: "{{ docker_packages }}"
       state: present
     when: ansible_os_family in ['Debian', 'RedHat']
 
-  - name: Ensure Docker is installed from repository
-    ansible.builtin.command: "docker version --format '{{ '{{' }} .Server.Version {{ '}}' }}'"
-    register: docker_installed
-    changed_when: false
-    failed_when: false
-    when: ansible_os_family in ['Debian', 'RedHat']
-    ignore_errors: true
+  - name: Install Docker packages (Suse/Arch)
+    ansible.builtin.package:
+      name: "{{ docker_os_config[ansible_os_family].packages }}"
+      state: present
+    when: ansible_os_family in ['Suse', 'Archlinux']
 
   - name: Install Docker Compose plugin
     ansible.builtin.package:
@@ -153,6 +171,7 @@
       name: "{{ docker_service }}"
       enabled: true
       state: started
+      daemon_reload: true
 
   - name: Create registry data directory
     ansible.builtin.file:
