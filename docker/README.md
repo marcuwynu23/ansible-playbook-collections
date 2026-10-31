@@ -124,6 +124,175 @@ ansible-playbook -i inventory.ini setup.yml --check
 ansible-playbook -i inventory.ini setup.yml --diff
 ```
 
+## Using the registry
+
+### Login first (authentication is enabled by default)
+
+```bash
+docker login 127.0.0.1:5000
+# Username: admin
+# Password: ChangeMe123!
+```
+
+### Push an image to the registry
+
+```bash
+docker pull nginx:alpine
+docker tag nginx:alpine 127.0.0.1:5000/nginx:alpine
+docker push 127.0.0.1:5000/nginx:alpine
+```
+
+### Pull an image from the registry
+
+```bash
+docker pull 127.0.0.1:5000/nginx:alpine
+```
+
+### Use Docker context to work with remote host
+
+```bash
+docker context use gcp-vps
+docker login 127.0.0.1:5000
+docker push 127.0.0.1:5000/nginx:alpine
+```
+
+### List all images in the registry
+
+```bash
+curl -u admin:ChangeMe123! http://127.0.0.1:5000/v2/_catalog
+```
+
+### List all tags for a specific image
+
+```bash
+curl -u admin:ChangeMe123! http://127.0.0.1:5000/v2/nginx/tags/list
+```
+
+### Check registry health
+
+```bash
+curl -u admin:ChangeMe123! http://127.0.0.1:5000/v2/
+# Expected response: {}
+```
+
+### Delete an image tag from the registry
+
+```bash
+# Get the digest
+curl -u admin:ChangeMe123! -I http://127.0.0.1:5000/v2/nginx/manifests/alpine
+
+# Delete using the digest from the Docker-Content-Digest header
+curl -u admin:ChangeMe123! -X DELETE http://127.0.0.1:5000/v2/nginx/manifests/sha256:<digest>
+```
+
+## Loading airgapped/offline images
+
+For airgapped or offline environments with no internet access:
+
+### Export an image on a machine WITH internet
+
+```bash
+# Pull the image
+docker pull nginx:alpine
+
+# Save to a tar file
+docker save nginx:alpine -o nginx-alpine.tar
+```
+
+### Transfer the tar file to the airgapped machine
+
+```bash
+scp nginx-alpine.tar gcp-user@35.252.71.180:/home/gcp-user/
+```
+
+### Load the image on the airgapped machine
+
+```bash
+# Direct load into local Docker
+docker load -i nginx-alpine.tar
+```
+
+### Load AND push to the local registry (recommended)
+
+```bash
+# Load the image
+docker load -i nginx-alpine.tar
+
+# Login to registry
+docker login 127.0.0.1:5000
+
+# Tag and push
+docker tag nginx:alpine 127.0.0.1:5000/nginx:alpine
+docker push 127.0.0.1:5000/nginx:alpine
+```
+
+### Bulk export multiple images
+
+```bash
+# Export multiple images at once
+docker save nginx:alpine redis:alpine postgres:16 -o images-bundle.tar
+
+# On the airgapped machine
+docker load -i images-bundle.tar
+```
+
+### Load from registry on airgapped machine
+
+```bash
+# Once images are pushed to the registry, pull them on any airgapped machine
+docker login 127.0.0.1:5000
+docker pull 127.0.0.1:5000/nginx:alpine
+```
+
+## Testing with curl
+
+### Basic health check (no auth needed)
+
+```bash
+curl http://127.0.0.1:5000/v2/
+# Expected: {}
+```
+
+### Health check with auth
+
+```bash
+curl -u admin:ChangeMe123! http://127.0.0.1:5000/v2/
+# Expected: {}
+```
+
+### List all repositories in registry
+
+```bash
+curl -u admin:ChangeMe123! http://127.0.0.1:5000/v2/_catalog
+# Expected: {"repositories":["nginx"]}
+```
+
+### List tags for an image
+
+```bash
+curl -u admin:ChangeMe123! http://127.0.0.1:5000/v2/nginx/tags/list
+# Expected: {"name":"nginx","tags":["alpine"]}
+```
+
+### Get image manifest
+
+```bash
+curl -u admin:ChangeMe123! http://127.0.0.1:5000/v2/nginx/manifests/alpine
+```
+
+### Test from remote host (via SSH)
+
+```bash
+ssh gcp-user@35.252.71.180 "curl -u admin:ChangeMe123! http://127.0.0.1:5000/v2/_catalog"
+```
+
+### Verify authentication is working (should get 401 without credentials)
+
+```bash
+curl http://127.0.0.1:5000/v2/_catalog
+# Expected: {"errors":[{"code":"UNAUTHORIZED",...}]}
+```
+
 ## Operational commands
 
 ```bash
