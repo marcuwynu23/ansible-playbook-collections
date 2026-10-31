@@ -8,9 +8,9 @@
 #
 # Usage:
 #   ansible-playbook -i inventory removal.yml
-#   ansible-playbook -i inventory removal.yml -e docker_remove_registry_data=true # also delete images!
-#   ansible-playbook -i inventory removal.yml -e docker_remove_registry_auth=false # keep htpasswd
-#   ansible-playbook -i inventory removal.yml -e docker_remove_packages=false     # keep packages
+#   ansible-playbook -i inventory removal.yml -e docker_remove_registry_data=true
+#   ansible-playbook -i inventory removal.yml -e docker_remove_registry_auth=false
+#   ansible-playbook -i inventory removal.yml -e docker_remove_packages=false
 
 - name: Remove Docker
   hosts: remote
@@ -20,32 +20,28 @@
   vars:
     docker_remove_packages: true
     docker_remove_registry_data: false
+    docker_remove_registry_auth: true
     docker_manage_firewall: true
     docker_registry_port: 5000
     docker_registry_data_dir: /var/lib/registry
-    docker_remove_registry_auth: true
     docker_registry_htpasswd_dir: /etc/docker-registry
 
     docker_os_config:
       Debian:
-        packages: [ docker-compose ]
-        compose_packages: [ docker-compose ]
+        packages: [ docker-ce, docker-ce-cli, docker-ce-rootless-extras, docker.io, docker-compose, docker-compose-plugin, docker-buildx-plugin ]
+        compose_packages: []
         service: docker
-        repo_url: "{{ docker_repo_url_apt }}"
-        gpg_key: "{{ docker_gpg_key_url }}"
       RedHat:
-        packages: []
-        compose_packages: [ docker-compose-plugin ]
+        packages: [ docker-ce, docker-ce-cli, docker-ce-rootless-extras, docker, docker-compose-plugin ]
+        compose_packages: []
         service: docker
-        repo_url: "{{ docker_repo_url_yum }}"
-        gpg_key: "{{ docker_gpg_key_url }}"
       Suse:
-        packages: []
-        compose_packages: [ docker-compose-plugin ]
+        packages: [ docker-ce, docker-ce-cli, docker-compose-plugin ]
+        compose_packages: []
         service: docker
       Archlinux:
-        packages: []
-        compose_packages: [ docker-compose ]
+        packages: [ docker, docker-compose ]
+        compose_packages: []
         service: docker
 
   pre_tasks:
@@ -138,13 +134,31 @@
     - ansible_os_family == 'Debian'
     - "'Status: active' in (docker_ufw_status.stdout | default(''))"
 
-  - name: Remove Docker packages
+  - name: Remove all Docker packages
     ansible.builtin.package:
-      name: docker-ce
+      name: "{{ docker_packages }}"
       state: absent
     when: docker_remove_packages | bool
+
+  - name: Remove Docker APT repository
+    ansible.builtin.file:
+      path: /etc/apt/sources.list.d/docker.list
+      state: absent
+    when:
+    - docker_remove_packages | bool
+    - ansible_os_family == 'Debian'
+
+  - name: Remove Docker GPG key
+    ansible.builtin.apt_key:
+      id: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+      state: absent
+    when:
+    - docker_remove_packages | bool
+    - ansible_os_family == 'Debian'
 
   - name: Done
     ansible.builtin.debug:
       msg: >-
-        Docker removed from {{ inventory_hostname }}. Registry data {{ 'deleted' if docker_remove_registry_data | bool else 'kept' }}, registry auth {{ 'deleted' if docker_remove_registry_auth | bool else 'kept' }}.
+        Docker removed from {{ inventory_hostname }}.
+        Registry data {{ 'deleted' if docker_remove_registry_data | bool else 'kept' }},
+        registry auth {{ 'deleted' if docker_remove_registry_auth | bool else 'kept' }}.
