@@ -24,10 +24,14 @@
     docker_log_max_file: "3"
     docker_registry_mirrors: []
     docker_insecure_registries:
-      - 127.0.0.1:5000
+    - 127.0.0.1:5000
     docker_users: []
     docker_install_compose: true
     docker_manage_firewall: true
+
+    docker_gpg_key_url: https://download.docker.com/linux/debian/gpg
+    docker_repo_url_apt: "https://download.docker.com/linux/{{ ansible_distribution | lower }}"
+    docker_repo_url_yum: "https://download.docker.com/linux/{{ ansible_distribution | lower }}"
 
     docker_registry_enabled: true
     docker_registry_image: registry:2
@@ -39,24 +43,28 @@
     docker_registry_htpasswd_dir: /etc/docker-registry
     docker_registry_htpasswd_path: /etc/docker-registry/htpasswd
     docker_registry_users:
-      - username: admin
-        password: "ChangeMe123!"
+    - username: admin
+      password: "ChangeMe123!"
 
     docker_os_config:
       Debian:
         packages: [ docker.io ]
-        compose_packages: [ docker-compose-plugin ]
+        compose_packages: [ docker-compose ]
         service: docker
+        repo_url: "{{ docker_repo_url_apt }}"
+        gpg_key: "{{ docker_gpg_key_url }}"
       RedHat:
-        packages: [ docker ]
+        packages: []
         compose_packages: [ docker-compose-plugin ]
         service: docker
+        repo_url: "{{ docker_repo_url_yum }}"
+        gpg_key: "{{ docker_gpg_key_url }}"
       Suse:
-        packages: [ docker ]
+        packages: []
         compose_packages: [ docker-compose-plugin ]
         service: docker
       Archlinux:
-        packages: [ docker ]
+        packages: []
         compose_packages: [ docker-compose ]
         service: docker
 
@@ -68,13 +76,35 @@
       docker_users: "{{ docker_users | from_json if docker_users is string else docker_users }}"
       docker_registry_users: "{{ docker_registry_users | from_json if docker_registry_users is string else docker_registry_users }}"
 
-  - name: Check that the OS family is supported
-    ansible.builtin.assert:
-      that: ansible_os_family in docker_os_config
-      fail_msg: >-
-        Unsupported OS family '{{ ansible_os_family }}' ({{ ansible_distribution }} {{ ansible_distribution_version }}).
-      success_msg: >-
-        Detected {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }}) - supported.
+  - name: Add Docker GPG key
+    ansible.builtin.apt_key:
+      url: "{{ docker_gpg_key_url }}"
+      state: present
+    when: ansible_os_family == 'Debian'
+
+  - name: Add Docker APT repository
+    ansible.builtin.lineinfile:
+      path: /etc/apt/sources.list.d/docker.list
+      line: "deb [arch={{ ansible_architecture }}] {{ docker_repo_url_apt }} {{ ansible_distribution_release }} stable"
+      state: present
+      create: true
+    when: ansible_os_family == 'Debian'
+
+  - name: Update apt cache and install Docker
+    ansible.builtin.apt:
+      name: docker-ce
+      state: present
+      update_cache: true
+    when: ansible_os_family == 'Debian'
+
+  - name: Add Docker YUM repository
+    ansible.builtin.yum_repository:
+      name: docker
+      description: Docker CE Stable
+      baseurl: "{{ docker_repo_url_yum }}"
+      gpgkey: "{{ docker_gpg_key_url }}"
+      gpgcheck: true
+    when: ansible_os_family == 'RedHat'
 
   - name: Set OS-specific facts
     ansible.builtin.set_fact:
@@ -85,8 +115,17 @@
   tasks:
   - name: Install Docker packages
     ansible.builtin.package:
-      name: "{{ docker_packages }}"
+      name: "{{ docker_os_config[ansible_os_family].packages | default(['docker.io']) | first }}"
       state: present
+    when: ansible_os_family in ['Debian', 'RedHat']
+
+  - name: Ensure Docker is installed from repository
+    ansible.builtin.command: "docker version --format '{{ '{{' }} .Server.Version {{ '}}' }}'"
+    register: docker_installed
+    changed_when: false
+    failed_when: false
+    when: ansible_os_family in ['Debian', 'RedHat']
+    ignore_errors: true
 
   - name: Install Docker Compose plugin
     ansible.builtin.package:
@@ -125,7 +164,7 @@
   - name: Build registry container settings
     ansible.builtin.set_fact:
       docker_registry_volumes:
-        - "{{ docker_registry_data_dir }}:/var/lib/registry"
+      - "{{ docker_registry_data_dir }}:/var/lib/registry"
       docker_registry_env: {}
     when: docker_registry_enabled | bool
 
@@ -170,7 +209,7 @@
       state: started
       restart_policy: always
       ports:
-        - "{{ docker_registry_port }}:5000"
+      - "{{ docker_registry_port }}:5000"
       volumes: "{{ docker_registry_volumes }}"
       env: "{{ docker_registry_env }}"
     when: docker_registry_enabled | bool
