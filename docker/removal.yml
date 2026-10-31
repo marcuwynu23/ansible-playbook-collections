@@ -28,19 +28,23 @@
 
     docker_os_config:
       Debian:
-        packages: [ docker.io ]
-        compose_packages: [ docker-compose-plugin ]
+        packages: [ docker-compose ]
+        compose_packages: [ docker-compose ]
         service: docker
+        repo_url: "{{ docker_repo_url_apt }}"
+        gpg_key: "{{ docker_gpg_key_url }}"
       RedHat:
-        packages: [ docker ]
+        packages: []
         compose_packages: [ docker-compose-plugin ]
         service: docker
+        repo_url: "{{ docker_repo_url_yum }}"
+        gpg_key: "{{ docker_gpg_key_url }}"
       Suse:
-        packages: [ docker ]
+        packages: []
         compose_packages: [ docker-compose-plugin ]
         service: docker
       Archlinux:
-        packages: [ docker ]
+        packages: []
         compose_packages: [ docker-compose ]
         service: docker
 
@@ -134,15 +138,9 @@
     - ansible_os_family == 'Debian'
     - "'Status: active' in (docker_ufw_status.stdout | default(''))"
 
-  - name: Remove Docker Compose packages
-    ansible.builtin.package:
-      name: "{{ docker_compose_packages }}"
-      state: absent
-    when: docker_remove_packages | bool
-
   - name: Remove Docker packages
     ansible.builtin.package:
-      name: "{{ docker_packages }}"
+      name: docker-ce
       state: absent
     when: docker_remove_packages | bool
 
